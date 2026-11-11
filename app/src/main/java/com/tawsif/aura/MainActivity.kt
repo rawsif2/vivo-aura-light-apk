@@ -160,9 +160,9 @@ class MainActivity : Activity() {
 
     private fun checkAuraLight() {
         runCatching {
-            val has = transact(1, reader = { it.readInt() != 0 })
-            val lightCase = transact(2, reader = { it.readInt() })
-            val lightType = transact(3, reader = { it.readInt() })
+            val has = transact(1, reader = { (it.readInt() != 0).toString() })
+            val lightCase = transact(2, reader = { it.readInt().toString() })
+            val lightType = transact(3, reader = { it.readInt().toString() })
             setStatus(
                 "Vivo service connected.\n" +
                 "hasLight: $has\n" +
