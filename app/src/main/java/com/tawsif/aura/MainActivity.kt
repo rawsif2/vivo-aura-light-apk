@@ -14,6 +14,7 @@ import android.widget.TextView
 import rikka.shizuku.Shizuku
 import rikka.shizuku.ShizukuBinderWrapper
 import rikka.shizuku.SystemServiceHelper
+import java.io.File
 
 class MainActivity : Activity() {
     companion object {
@@ -61,13 +62,13 @@ class MainActivity : Activity() {
             setPadding(0, 12, 0, 8)
         }
         val subtitle = TextView(this).apply {
-            text = "Vivo / iQOO framework controller"
+            text = "Vivo / iQOO framework controller · diagnostic build"
             textSize = 14f
             gravity = Gravity.CENTER
             setPadding(0, 0, 0, 24)
         }
         status = TextView(this).apply {
-            text = "Start Shizuku, then connect."
+            text = "Starting safely…"
             textSize = 15f
             setPadding(16, 18, 16, 18)
             setBackgroundColor(0xFF20252B.toInt())
@@ -80,9 +81,10 @@ class MainActivity : Activity() {
         addAction(content, "Connect Shizuku", ::connectShizuku)
         addAction(content, "Check Aura Light", ::checkAuraLight)
         addAction(content, "Stop All Lights", ::stopAllLights)
+        addAction(content, "Show crash report", ::showCrashReport)
 
         val note = TextView(this).apply {
-            text = "\nEffect starting is not enabled in this build. The Vivo startLight() call needs the exact VivoLightRecord Parcelable and supported segment data for this firmware. Sending guessed parcel data could fail or trigger the wrong hardware behavior."
+            text = "\nThis diagnostic build records an app crash for the next launch. Effect starting remains disabled until the VivoLightRecord parcel format is verified."
             textSize = 13f
             setPadding(4, 24, 4, 8)
         }
@@ -93,9 +95,18 @@ class MainActivity : Activity() {
         ))
         setContentView(root)
 
-        Shizuku.addRequestPermissionResultListener(permissionListener)
-        shizukuGranted = Shizuku.pingBinder() &&
-            Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+        runCatching {
+            Shizuku.addRequestPermissionResultListener(permissionListener)
+            shizukuGranted = Shizuku.pingBinder() &&
+                Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+            setStatus(if (shizukuGranted) {
+                "Shizuku permission is ready."
+            } else {
+                "App opened. Start Shizuku, then tap Connect Shizuku."
+            })
+        }.onFailure {
+            setStatus("Startup check failed: ${it.javaClass.simpleName}: ${it.message}")
+        }
     }
 
     private fun matchWrap() = LinearLayout.LayoutParams(
@@ -107,25 +118,31 @@ class MainActivity : Activity() {
         val button = Button(this).apply {
             text = label
             isAllCaps = false
-            setOnClickListener { action() }
+            setOnClickListener {
+                runCatching { action() }.onFailure {
+                    setStatus("Action failed: ${it.javaClass.simpleName}: ${it.message}")
+                }
+            }
         }
         parent.addView(button, matchWrap())
     }
 
     private fun connectShizuku() {
-        if (!Shizuku.pingBinder()) {
-            setStatus("Shizuku is not running. Start Shizuku first.")
-            return
+        runCatching {
+            if (!Shizuku.pingBinder()) {
+                setStatus("Shizuku is not running. Start Shizuku first.")
+                return
+            }
+            if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) {
+                shizukuGranted = true
+                setStatus("Shizuku is ready. Tap Check Aura Light.")
+                return
+            }
+            Shizuku.requestPermission(REQUEST_CODE)
+            setStatus("Shizuku permission request sent.")
+        }.onFailure {
+            setStatus("Shizuku error: ${it.javaClass.simpleName}: ${it.message}")
         }
-        if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) {
-            shizukuGranted = true
-            setStatus("Shizuku is ready. Tap Check Aura Light.")
-            return
-        }
-        if (Shizuku.shouldShowRequestPermissionRationale()) {
-            setStatus("Please grant Shizuku permission to this app.")
-        }
-        Shizuku.requestPermission(REQUEST_CODE)
     }
 
     private fun getService(): IBinder {
@@ -169,14 +186,23 @@ class MainActivity : Activity() {
                 "lightCase: $lightCase\n" +
                 "lightType: $lightType"
             )
-        }.onFailure { setStatus("Check failed: ${it.message ?: it.javaClass.simpleName}") }
+        }.onFailure { setStatus("Check failed: ${it.javaClass.simpleName}: ${it.message}") }
     }
 
     private fun stopAllLights() {
         runCatching {
             transact(8, reader = { "Stop-all command sent." })
             setStatus("Stop-all command sent to Vivo service.")
-        }.onFailure { setStatus("Stop failed: ${it.message ?: it.javaClass.simpleName}") }
+        }.onFailure { setStatus("Stop failed: ${it.javaClass.simpleName}: ${it.message}") }
+    }
+
+    private fun showCrashReport() {
+        val report = File(filesDir, "crash-report.txt")
+        setStatus(if (report.exists()) {
+            report.readText().takeLast(12000)
+        } else {
+            "No saved crash report found. If this build crashes, reopen it and tap Show crash report."
+        })
     }
 
     private fun setStatus(message: String) {
@@ -184,7 +210,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
-        Shizuku.removeRequestPermissionResultListener(permissionListener)
+        runCatching { Shizuku.removeRequestPermissionResultListener(permissionListener) }
         super.onDestroy()
     }
 }
