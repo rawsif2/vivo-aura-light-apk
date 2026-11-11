@@ -1,216 +1,202 @@
 package com.tawsif.aura
 
 import android.app.Activity
-import android.os.Bundle
+import android.content.ComponentName
+import android.content.ServiceConnection
 import android.content.pm.PackageManager
+import android.graphics.Typeface
+import android.os.Bundle
 import android.os.IBinder
-import android.os.Parcel
+import android.text.InputType
 import android.view.Gravity
-import android.view.ViewGroup
-import android.widget.Button
-import android.widget.LinearLayout
-import android.widget.ScrollView
-import android.widget.TextView
+import android.view.View
+import android.widget.*
 import rikka.shizuku.Shizuku
-import rikka.shizuku.ShizukuBinderWrapper
-import rikka.shizuku.SystemServiceHelper
-import java.io.File
+import java.util.concurrent.Executors
 
 class MainActivity : Activity() {
-    companion object {
-        private const val SERVICE_NAME = "vivo_light_service"
-        private const val DESCRIPTOR = "vivo.app.vivolight.IVivoLightManager"
-        private const val REQUEST_CODE = 4107
+    private val io = Executors.newSingleThreadExecutor()
+    private val scanner = Executors.newSingleThreadExecutor()
+    private var svc: ILightService? = null
+    @Volatile private var scanning = false
+
+    private lateinit var out: TextView
+    private lateinit var status: TextView
+    private lateinit var shellMode: CheckBox
+    private lateinit var pkg: EditText
+
+    private val shellPkg = "com.android.shell"
+    private val template = "{\n  \"effect\": \"breath\",\n  \"color\": \"#00FFAA\",\n  \"duration\": 3000\n}"
+
+    private val args by lazy {
+        Shizuku.UserServiceArgs(ComponentName(packageName, LightUserService::class.java.name))
+            .daemon(false).processNameSuffix("aura").version(1)
+    }
+    private val conn = object : ServiceConnection {
+        override fun onServiceConnected(n: ComponentName?, b: IBinder?) {
+            svc = ILightService.Stub.asInterface(b); log("Shell service connected."); refresh()
+        }
+        override fun onServiceDisconnected(n: ComponentName?) { svc = null; refresh() }
+    }
+    private val permListener = Shizuku.OnRequestPermissionResultListener { _, result ->
+        if (result == PackageManager.PERMISSION_GRANTED) bind() else log("Shizuku permission denied.")
+        refresh()
+    }
+    private val binderListener = Shizuku.OnBinderReceivedListener {
+        try { if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) bind() } catch (_: Throwable) {}
+        refresh()
+    }
+    private val deadListener = Shizuku.OnBinderDeadListener { svc = null; refresh() }
+
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+    private fun n(e: EditText, d: Int) = e.text.toString().trim().toIntOrNull() ?: d
+
+    private fun field(hint: String, value: String = "", number: Boolean = false, lines: Int = 1) =
+        EditText(this).apply {
+            this.hint = hint; setText(value); typeface = Typeface.MONOSPACE; textSize = 14f
+            if (lines > 1) { setSingleLine(false); minLines = lines; gravity = Gravity.TOP }
+            if (number) inputType = InputType.TYPE_CLASS_NUMBER
+        }
+
+    private fun button(label: String, onClick: () -> Unit) =
+        Button(this).apply { text = label; isAllCaps = false; setOnClickListener { onClick() } }
+
+    private fun row(vararg v: View) = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        v.forEach { addView(it, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)) }
     }
 
-    private lateinit var status: TextView
-    private var serviceBinder: IBinder? = null
-    private var shizukuGranted = false
+    private fun label(t: String) = TextView(this).apply {
+        text = t; textSize = 16f; setTypeface(null, Typeface.BOLD); setPadding(0, dp(16), 0, dp(4))
+    }
 
-    private val permissionListener =
-        Shizuku.OnRequestPermissionResultListener { requestCode, grantResult ->
-            if (requestCode == REQUEST_CODE) {
-                shizukuGranted = grantResult == PackageManager.PERMISSION_GRANTED
-                setStatus(if (shizukuGranted) {
-                    "Shizuku permission granted. Tap Check Aura Light."
-                } else {
-                    "Shizuku permission denied."
-                })
-            }
-        }
+    private fun log(s: String) = runOnUiThread { out.text = (s + "\n\n" + out.text).take(10000) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
         val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(24, 32, 24, 24)
-            gravity = Gravity.CENTER_HORIZONTAL
+            orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(16), dp(16), dp(32))
         }
-
-        val scroll = ScrollView(this)
-        val content = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
+        status = TextView(this)
+        out = TextView(this).apply { typeface = Typeface.MONOSPACE; textSize = 12f; setTextIsSelectable(true) }
+        shellMode = CheckBox(this).apply {
+            text = "Run as shell via Shizuku (try this if direct mode is rejected)"
+            isChecked = true
+            setOnCheckedChangeListener { _, c -> pkg.setText(if (c) shellPkg else packageName) }
         }
-        scroll.addView(content)
+        pkg = field("Caller package", shellPkg)
+        val type = field("Light type", "400", true)
+        val dur = field("Duration ms", "5000", true)
+        val times = field("Repeat times", "3", true)
+        val json = field("JSON effect", template, lines = 6)
+        val from = field("From", "1", true)
+        val to = field("To", "100", true)
+        val cmd = field("Shell command", "dumpsys vivo_light_service")
 
-        val title = TextView(this).apply {
-            text = "AURA LIGHT"
-            textSize = 27f
-            gravity = Gravity.CENTER
-            setPadding(0, 12, 0, 8)
-        }
-        val subtitle = TextView(this).apply {
-            text = "Vivo / iQOO framework controller · diagnostic build"
-            textSize = 14f
-            gravity = Gravity.CENTER
-            setPadding(0, 0, 0, 24)
-        }
-        status = TextView(this).apply {
-            text = "Starting safely…"
-            textSize = 15f
-            setPadding(16, 18, 16, 18)
-            setBackgroundColor(0xFF20252B.toInt())
-        }
+        root.addView(TextView(this).apply { text = "Vivo / iQOO Aura Light"; textSize = 22f })
+        root.addView(status)
+        root.addView(button("Connect Shizuku") { connect() })
+        root.addView(shellMode)
+        root.addView(pkg)
+        root.addView(row(button("Check light") { go("info") }, button("Stop all") { go("stopall") }))
 
-        content.addView(title, matchWrap())
-        content.addView(subtitle, matchWrap())
-        content.addView(status, matchWrap())
+        root.addView(label("Effect by type ID"))
+        root.addView(row(type, dur, times))
+        root.addView(row(
+            button("Start (ms)") { go("duration", n(type, 400), n(dur, 5000)) },
+            button("Start (times)") { go("times", n(type, 400), n(times, 3)) }))
+        root.addView(row(
+            button("Start (no limit)") { go("start", n(type, 400)) },
+            button("Stop this type") { go("stoptype", n(type, 400)) }))
 
-        addAction(content, "Connect Shizuku", ::connectShizuku)
-        addAction(content, "Check Aura Light", ::checkAuraLight)
-        addAction(content, "Stop All Lights", ::stopAllLights)
-        addAction(content, "Show crash report", ::showCrashReport)
+        root.addView(label("Custom JSON effect (schema unverified)"))
+        root.addView(json)
+        root.addView(button("Start JSON") { go("json", arg = json.text.toString()) })
 
-        val note = TextView(this).apply {
-            text = "\nThis diagnostic build records an app crash for the next launch. Effect starting remains disabled until the VivoLightRecord parcel format is verified."
-            textSize = 13f
-            setPadding(4, 24, 4, 8)
-        }
-        content.addView(note, matchWrap())
-        root.addView(scroll, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.MATCH_PARENT
-        ))
-        setContentView(root)
+        root.addView(label("Find valid type IDs (1.5s each, watch the light)"))
+        root.addView(row(from, to))
+        root.addView(row(
+            button("Scan") { scan(n(from, 1), n(to, 100)) },
+            button("Stop scan") { scanning = false }))
 
-        runCatching {
-            Shizuku.addRequestPermissionResultListener(permissionListener)
-            shizukuGranted = Shizuku.pingBinder() &&
-                Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
-            setStatus(if (shizukuGranted) {
-                "Shizuku permission is ready."
-            } else {
-                "App opened. Start Shizuku, then tap Connect Shizuku."
-            })
-        }.onFailure {
-            setStatus("Startup check failed: ${it.javaClass.simpleName}: ${it.message}")
-        }
-    }
+        root.addView(label("Debug"))
+        root.addView(cmd)
+        root.addView(row(
+            button("Run shell") { go("shell", arg = cmd.text.toString()) },
+            button("Service logs") { go("logs") }))
+        root.addView(button("Clear output") { out.text = "" })
+        root.addView(out)
+        setContentView(ScrollView(this).apply { addView(root) })
 
-    private fun matchWrap() = LinearLayout.LayoutParams(
-        ViewGroup.LayoutParams.MATCH_PARENT,
-        ViewGroup.LayoutParams.WRAP_CONTENT
-    ).apply { bottomMargin = 14 }
-
-    private fun addAction(parent: LinearLayout, label: String, action: () -> Unit) {
-        val button = Button(this).apply {
-            text = label
-            isAllCaps = false
-            setOnClickListener {
-                runCatching { action() }.onFailure {
-                    setStatus("Action failed: ${it.javaClass.simpleName}: ${it.message}")
-                }
-            }
-        }
-        parent.addView(button, matchWrap())
-    }
-
-    private fun connectShizuku() {
-        runCatching {
-            if (!Shizuku.pingBinder()) {
-                setStatus("Shizuku is not running. Start Shizuku first.")
-                return
-            }
-            if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) {
-                shizukuGranted = true
-                setStatus("Shizuku is ready. Tap Check Aura Light.")
-                return
-            }
-            Shizuku.requestPermission(REQUEST_CODE)
-            setStatus("Shizuku permission request sent.")
-        }.onFailure {
-            setStatus("Shizuku error: ${it.javaClass.simpleName}: ${it.message}")
-        }
-    }
-
-    private fun getService(): IBinder {
-        if (!Shizuku.pingBinder()) throw IllegalStateException("Shizuku is not running")
-        if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
-            throw SecurityException("Shizuku permission has not been granted")
-        }
-        val raw = SystemServiceHelper.getSystemService(SERVICE_NAME)
-            ?: throw IllegalStateException("Vivo service '$SERVICE_NAME' was not found")
-        val wrapped = ShizukuBinderWrapper(raw)
-        if (!wrapped.isBinderAlive) throw IllegalStateException("Vivo service Binder is not alive")
-        serviceBinder = wrapped
-        return wrapped
-    }
-
-    private fun transact(code: Int, writer: (Parcel) -> Unit = {}, reader: (Parcel) -> String): String {
-        val binder = getService()
-        val data = Parcel.obtain()
-        val reply = Parcel.obtain()
-        try {
-            data.writeInterfaceToken(DESCRIPTOR)
-            writer(data)
-            val ok = binder.transact(code, data, reply, 0)
-            if (!ok) throw IllegalStateException("Binder transaction $code was rejected")
-            reply.readException()
-            return reader(reply)
-        } finally {
-            reply.recycle()
-            data.recycle()
-        }
-    }
-
-    private fun checkAuraLight() {
-        runCatching {
-            val has = transact(1, reader = { (it.readInt() != 0).toString() })
-            val lightCase = transact(2, reader = { it.readInt().toString() })
-            val lightType = transact(3, reader = { it.readInt().toString() })
-            setStatus(
-                "Vivo service connected.\n" +
-                "hasLight: $has\n" +
-                "lightCase: $lightCase\n" +
-                "lightType: $lightType"
-            )
-        }.onFailure { setStatus("Check failed: ${it.javaClass.simpleName}: ${it.message}") }
-    }
-
-    private fun stopAllLights() {
-        runCatching {
-            transact(8, reader = { "Stop-all command sent." })
-            setStatus("Stop-all command sent to Vivo service.")
-        }.onFailure { setStatus("Stop failed: ${it.javaClass.simpleName}: ${it.message}") }
-    }
-
-    private fun showCrashReport() {
-        val report = File(filesDir, "crash-report.txt")
-        setStatus(if (report.exists()) {
-            report.readText().takeLast(12000)
-        } else {
-            "No saved crash report found. If this build crashes, reopen it and tap Show crash report."
-        })
-    }
-
-    private fun setStatus(message: String) {
-        runOnUiThread { status.text = message }
+        Shizuku.addBinderReceivedListenerSticky(binderListener)
+        Shizuku.addBinderDeadListener(deadListener)
+        Shizuku.addRequestPermissionResultListener(permListener)
+        refresh()
     }
 
     override fun onDestroy() {
-        runCatching { Shizuku.removeRequestPermissionResultListener(permissionListener) }
+        Shizuku.removeBinderReceivedListener(binderListener)
+        Shizuku.removeBinderDeadListener(deadListener)
+        Shizuku.removeRequestPermissionResultListener(permListener)
+        scanning = false
         super.onDestroy()
+    }
+
+    private fun refresh() = runOnUiThread {
+        status.text = try {
+            when {
+                !Shizuku.pingBinder() -> "Shizuku: not running (direct mode only)"
+                Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED -> "Shizuku: running, permission needed"
+                svc == null -> "Shizuku: authorized, shell service not bound"
+                else -> "Shizuku: shell service connected"
+            }
+        } catch (t: Throwable) { "Shizuku: $t" }
+    }
+
+    private fun connect() {
+        try {
+            when {
+                !Shizuku.pingBinder() -> log("Shizuku isn't running. Open the Shizuku app, start it, then retry.")
+                Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED -> bind()
+                Shizuku.shouldShowRequestPermissionRationale() ->
+                    log("Permission was denied permanently. Grant it in Shizuku > Authorized apps.")
+                else -> Shizuku.requestPermission(100)
+            }
+        } catch (t: Throwable) { log("Connect failed: $t") }
+    }
+
+    private fun bind() {
+        try { Shizuku.bindUserService(args, conn) } catch (t: Throwable) { log("Bind failed: $t") }
+    }
+
+    private fun exec(op: String, p: String, sh: Boolean, a: Int, b: Int, arg: String): String = try {
+        if (sh) svc?.call(op, p, arg, a, b) ?: "Shell service not connected. Tap Connect Shizuku."
+        else LightCore.call(op, p, arg, a, b)
+    } catch (t: Throwable) { "ERROR: $t" }
+
+    private fun go(op: String, a: Int = 0, b: Int = 0, arg: String = "") {
+        val p = pkg.text.toString().trim(); val sh = shellMode.isChecked
+        io.execute { log("> $op (pkg=$p, ${if (sh) "shell" else "direct"})\n" + exec(op, p, sh, a, b, arg)) }
+    }
+
+    private fun scan(from: Int, to: Int) {
+        if (scanning) return
+        val p = pkg.text.toString().trim(); val sh = shellMode.isChecked
+        if (sh && svc == null) { log("Connect Shizuku first."); return }
+        scanning = true
+        scanner.execute {
+            log("Scan $from..$to started. Accepted IDs are listed; watch the back light.")
+            var hits = 0
+            for (id in from..to) {
+                if (!scanning) break
+                val r = exec("duration", p, sh, id, 1500).substringAfter("-> ", "").trim().toIntOrNull()
+                if (r != null && r >= 0) {
+                    hits++; log("type $id accepted (ret=$r)")
+                    Thread.sleep(1700); exec("stoptype", p, sh, id, 0, "")
+                }
+            }
+            scanning = false
+            log("Scan finished, $hits accepted.")
+        }
     }
 }
