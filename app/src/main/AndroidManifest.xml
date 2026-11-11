@@ -2,14 +2,11 @@
     <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
 
     <application
-        android:name=".AuraApplication"
         android:allowBackup="false"
         android:label="Aura Light Controller"
-        android:theme="@android:style/Theme.Material.NoActionBar"
-        android:supportsRtl="true">
-        <activity
-            android:name=".MainActivity"
-            android:exported="true">
+        android:theme="@android:style/Theme.Material.NoActionBar">
+        <activity android:name=".MainActivity" android:exported="true"
+            android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -21,10 +18,7 @@
             android:authorities="${applicationId}.shizuku"
             android:enabled="true"
             android:exported="true"
-            android:multiprocess="false">
-            <meta-data
-                android:name="moe.shizuku.client.V3_SUPPORT"
-                android:value="true" />
-        </provider>
+            android:multiprocess="false"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
     </application>
 </manifest>
