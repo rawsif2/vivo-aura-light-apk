@@ -10,8 +10,9 @@ Controls the back aura light on vivo/iQOO phones (iQOO Z10x, vivo T4x) through v
 ## Features
 - Check light (`hasLight`, `getLightCase`, `getLightType`), Stop all
 - Start by type ID: timed, N repeats, or unlimited; stop by type
-- Custom JSON effect (`startLight(pkg, json)`): edit the template once the schema is known
-- Scan: tries type IDs in a range, lists the ones the service accepts
+- Custom effect builder (breathing / strobe / marquee) -> JSON -> `startLight(pkg, json)`; schema taken from vivo-services `JsonLightEffect`
+- Type picker with 13 known IDs (300 incoming call, 400 notification, 502 mood show, 511 charging plugin...)
+- Scan: tries a range or the known IDs, lists the ones the service accepts
 - Debug: run shell commands as shell, view `DynamicLight-*` logcat lines
 
 ## Build
