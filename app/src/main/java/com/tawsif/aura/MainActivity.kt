@@ -258,7 +258,7 @@ class MainActivity : Activity() {
             var hits = 0
             for (id in ids) {
                 if (!scanning) break
-                val r = exec("duration", p, sh, id, 1500).substringAfter("-> ", "").trim().toIntOrNull()
+                val r = exec("duration", p, sh, id, 1500, "").substringAfter("-> ", "").trim().toIntOrNull()
                 if (r != null && r >= 0) {
                     hits++; log("type $id accepted (ret=$r)")
                     Thread.sleep(1700); exec("stoptype", p, sh, id, 0, "")
