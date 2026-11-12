@@ -2,9 +2,8 @@ package com.tawsif.aura
 
 import org.lsposed.hiddenapibypass.HiddenApiBypass
 
-/** Talks to vivo's framework class. Runs in the app (direct mode) or inside the Shizuku shell process. */
+/** Talks to vivo's framework light manager directly from this app. */
 object LightCore {
-    private val I: Class<*> = Int::class.javaPrimitiveType!!
     private val S: Class<*> = String::class.java
 
     private val cls: Class<*> by lazy {
@@ -16,28 +15,15 @@ object LightCore {
     private fun inv(name: String, types: List<Class<*>>, vararg args: Any?): Any? =
         cls.getMethod(name, *types.toTypedArray()).invoke(mgr, *args)
 
-    fun call(op: String, pkg: String, arg: String, a: Int, b: Int): String = try {
+    fun call(op: String, pkg: String, arg: String): String = try {
         when (op) {
             "info" -> "uid=${android.os.Process.myUid()} hasLight=${inv("hasLight", emptyList())} " +
-                "case=${inv("getLightCase", emptyList())} type=${inv("getLightType", emptyList())}"
-            "start" -> "startLight -> ${inv("startLight", listOf(I, S), a, pkg)}"
-            "duration" -> "startLightByDuration -> ${inv("startLightByDuration", listOf(I, S, I), a, pkg, b)}"
-            "times" -> "startLightByTimes -> ${inv("startLightByTimes", listOf(I, S, I), a, pkg, b)}"
+                "case=${inv("getLightCase", emptyList())}"
             "json" -> "startLight(json) -> ${inv("startLight", listOf(S, S), pkg, arg)}"
-            "stoptype" -> { inv("stopLightByLightType", listOf(I, S), a, pkg); "stopLightByLightType done" }
             "stopall" -> { inv("stopLightAll", emptyList()); "stopLightAll done" }
-            "logs" -> sh("logcat -d -t 120 -s DynamicLight-VivoLightManager:V DynamicLight-VivoLightManagerService:V DynamicLight-Json:V System.err:W")
-            "shell" -> sh(arg)
             else -> "unknown op: $op"
         }
     } catch (e: Throwable) {
         "ERROR: " + (e.cause ?: e)
-    }
-
-    private fun sh(cmd: String): String {
-        val p = ProcessBuilder("timeout", "20", "sh", "-c", cmd).redirectErrorStream(true).start()
-        val text = p.inputStream.bufferedReader().readText()
-        p.waitFor()
-        return text.takeLast(6000).ifBlank { "(no output)" }
     }
 }
