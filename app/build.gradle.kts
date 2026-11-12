@@ -11,8 +11,8 @@ android {
         applicationId = "com.tawsif.aura"
         minSdk = 26
         targetSdk = 34
-        versionCode = 4
-        versionName = "2.2.0"
+        versionCode = 5
+        versionName = "3.0.0"
     }
 
     // Fixed keystore so every CI build has the same signature (updates install over old ones)
@@ -25,8 +25,6 @@ android {
         }
     }
 
-    buildFeatures { aidl = true }
-
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -35,7 +33,5 @@ android {
 }
 
 dependencies {
-    implementation("dev.rikka.shizuku:api:13.1.5")
-    implementation("dev.rikka.shizuku:provider:13.1.5")
     implementation("org.lsposed.hiddenapibypass:hiddenapibypass:4.3")
 }
