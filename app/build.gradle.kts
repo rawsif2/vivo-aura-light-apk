@@ -11,8 +11,8 @@ android {
         applicationId = "com.tawsif.aura"
         minSdk = 26
         targetSdk = 34
-        versionCode = 2
-        versionName = "2.0.0"
+        versionCode = 3
+        versionName = "2.1.0"
     }
 
     // Fixed keystore so every CI build has the same signature (updates install over old ones)
