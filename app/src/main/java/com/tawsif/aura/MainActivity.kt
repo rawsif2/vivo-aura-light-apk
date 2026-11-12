@@ -86,7 +86,7 @@ class MainActivity : Activity() {
     private lateinit var presetBox: LinearLayout
     private lateinit var adv: LinearLayout
     private lateinit var out: TextView
-    private lateinit var shellMode: CheckBox
+    private lateinit var modeSpin: Spinner
     private lateinit var pkg: EditText
     private lateinit var lightName: EditText
     private lateinit var swapRb: CheckBox
@@ -106,6 +106,10 @@ class MainActivity : Activity() {
     )
     private val gameIds = (1601..1610).toList() + (1701..1703) + (1801..1809) + (1901..1907) + 2001
     private val shellPkg = "com.android.shell"
+    private val modeNames = listOf("auto", "direct", "shizuku")
+    @Volatile private var directOk: Boolean? = null
+    private class Ctx(val mode: Int, val pkg: String)
+    private fun ctx() = Ctx(modeSpin.selectedItemPosition, pkg.text.toString().trim())
 
     private val args by lazy {
         Shizuku.UserServiceArgs(ComponentName(packageName, LightUserService::class.java.name))
@@ -203,7 +207,7 @@ class MainActivity : Activity() {
 
         // header
         status = text("", 13f, Color.WHITE, true).apply {
-            setPadding(dp(14), dp(7), dp(14), dp(7)); setOnClickListener { connect() }
+            setPadding(dp(14), dp(7), dp(14), dp(7)); setOnClickListener { onStatusClick() }
         }
         root.addView(LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
@@ -327,7 +331,7 @@ class MainActivity : Activity() {
         refresh()
     }
 
-    override fun onResume() { super.onResume(); autoConnect(); refresh() }
+    override fun onResume() { super.onResume(); autoConnect(); refresh(); if (directOk == null) probe() }
 
     override fun onDestroy() {
         Shizuku.removeBinderReceivedListener(binderListener)
@@ -368,17 +372,46 @@ class MainActivity : Activity() {
     }
 
     private fun refresh() = runOnUiThread {
-        val (label, color) = try {
+        val sz = try {
             when {
-                !Shizuku.pingBinder() -> "Shizuku not running" to cRed
-                Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED -> "Tap to allow Shizuku" to cOrange
-                svc == null -> "Tap to connect" to cOrange
-                else -> "Connected" to cGreen
+                !Shizuku.pingBinder() -> 0
+                Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED -> 1
+                svc == null -> 2
+                else -> 3
             }
-        } catch (t: Throwable) { "Shizuku error" to cRed }
+        } catch (t: Throwable) { 0 }
+        val (label, color) = when {
+            directOk == true -> "Ready (no Shizuku needed)" to cGreen
+            sz == 3 -> "Ready (via Shizuku)" to cGreen
+            directOk == null -> "Checking…" to cOrange
+            sz == 1 -> "Tap to allow Shizuku" to cOrange
+            sz == 2 -> "Tap to connect Shizuku" to cOrange
+            else -> "No access, tap for help" to cRed
+        }
         status.text = "●  $label"
         status.background = rounded((color and 0x00FFFFFF) or (0x33 shl 24), 20)
         status.setTextColor(color)
+    }
+
+    private fun onStatusClick() {
+        when {
+            directOk == true -> say("Direct access works. Shizuku isn't needed.")
+            directOk == null -> probe(true)
+            else -> connect()
+        }
+    }
+
+    /** Tries a harmless call as this app (no Shizuku) to see whether the service lets normal apps in. */
+    private fun probe(manual: Boolean = false) {
+        io.execute {
+            val r = LightCore.call("info", packageName, "", 0, 0)
+            val ok = r.startsWith("uid=") && !r.contains("hasLight=false") && !r.contains("case=-1")
+            directOk = ok
+            log("> direct access test (no Shizuku)\n$r")
+            if (ok) { if (manual) say("Direct access works. Shizuku isn't needed.") }
+            else say("This phone doesn't allow direct access. Start Shizuku and tap the status.")
+            refresh()
+        }
     }
 
     // ---------- effect building ----------
@@ -420,25 +453,33 @@ class MainActivity : Activity() {
         prefs.edit().putString("last", stateJson().toString())
             .putString("lightName", lightName.text.toString().trim())
             .putBoolean("swapRb", swapRb.isChecked).apply()
-        val p = pkg.text.toString().trim(); val sh = shellMode.isChecked
+        val c = ctx()
         say("Starting…")
         startPreview()
         io.execute {
-            exec("stopall", p, sh, 0, 0, "")
-            val r = exec("json", p, sh, 0, 0, json)
+            exec(c, "stopall", 0, 0, "")
+            val r = exec(c, "json", 0, 0, json)
             val id = r.substringAfter("-> ", "").trim().toIntOrNull()
             log("> start effect\n$r")
-            if (id != null && id >= 0) say("Playing ✓") else {
+            if (id != null && id >= 0) {
+                say("Playing ✓" + if (r.startsWith("[via Shizuku]")) " (via Shizuku)" else if (c.mode != 2) " (no Shizuku needed)" else "")
+            } else {
                 runOnUiThread { stopPreview() }
-                say(if (r.startsWith("Shell service")) "Not connected. Tap the status at the top." else if (lightName.text.isNullOrBlank()) "Couldn't start. Open Advanced tools and set lightName." else "Couldn't start. See Advanced > Service logs.")
+                say(when {
+                    r.startsWith("Shell service") -> "Not connected. Tap the status at the top."
+                    r.startsWith("ERROR") && svc == null && c.mode == 0 ->
+                        "Direct access was refused. Start Shizuku and tap the status at the top."
+                    lightName.text.isNullOrBlank() -> "Couldn't start. Open Advanced tools and set lightName."
+                    else -> "Couldn't start. See Advanced tools > output."
+                })
             }
         }
     }
 
     private fun stopEffect() {
         stopPreview()
-        val p = pkg.text.toString().trim(); val sh = shellMode.isChecked
-        io.execute { log("> stop\n" + exec("stopall", p, sh, 0, 0, "")); say("Stopped") }
+        val c = ctx()
+        io.execute { log("> stop\n" + exec(c, "stopall", 0, 0, "")); say("Stopped") }
     }
 
     private fun startPreview() {
@@ -540,30 +581,52 @@ class MainActivity : Activity() {
         try { Shizuku.bindUserService(args, conn) } catch (t: Throwable) { log("Bind failed: $t") }
     }
 
-    private fun exec(op: String, p: String, sh: Boolean, a: Int, b: Int, arg: String): String = try {
-        if (sh) svc?.call(op, p, arg, a, b) ?: "Shell service not connected. Tap Connect Shizuku."
-        else LightCore.call(op, p, arg, a, b)
-    } catch (t: Throwable) { "ERROR: $t" }
+    private fun failed(r: String): Boolean {
+        if (r.startsWith("ERROR") || r.startsWith("Shell service")) return true
+        val id = r.substringAfter("-> ", "").trim().toIntOrNull()
+        return id != null && id < 0
+    }
+
+    /** mode 0 = auto (direct, then Shizuku), 1 = direct only, 2 = Shizuku only. */
+    private fun exec(c: Ctx, op: String, a: Int, b: Int, arg: String): String {
+        fun direct(): String = try {
+            LightCore.call(op, c.pkg.ifEmpty { packageName }, arg, a, b)
+        } catch (t: Throwable) { "ERROR: $t" }
+        fun shell(): String = try {
+            svc?.call(op, c.pkg.ifEmpty { shellPkg }, arg, a, b) ?: "Shell service not connected. Tap the status at the top."
+        } catch (t: Throwable) { "ERROR: $t" }
+        return when (c.mode) {
+            1 -> direct()
+            2 -> shell()
+            else -> {
+                val r = direct()
+                if (failed(r) && svc != null) {
+                    if (r.startsWith("ERROR")) { directOk = false; refresh() }
+                    "[via Shizuku] " + shell()
+                } else r
+            }
+        }
+    }
 
     private fun go(op: String, a: Int = 0, b: Int = 0, arg: String = "") {
-        val p = pkg.text.toString().trim(); val sh = shellMode.isChecked
-        io.execute { log("> $op (pkg=$p, ${if (sh) "shell" else "direct"})\n" + exec(op, p, sh, a, b, arg)) }
+        val c = ctx()
+        io.execute { log("> $op (mode=${modeNames[c.mode]})\n" + exec(c, op, a, b, arg)) }
     }
 
     private fun scan(ids: List<Int>) {
         if (scanning) return
-        val p = pkg.text.toString().trim(); val sh = shellMode.isChecked
-        if (sh && svc == null) { log("Connect Shizuku first."); return }
+        val c = ctx()
+        if (c.mode == 2 && svc == null) { log("Connect Shizuku first."); return }
         scanning = true
         scanner.execute {
             log("Scan of ${ids.size} IDs started. Accepted IDs are listed; watch the back light.")
             var hits = 0
             for (id in ids) {
                 if (!scanning) break
-                val r = exec("duration", p, sh, id, 1500, "").substringAfter("-> ", "").trim().toIntOrNull()
+                val r = exec(c, "duration", id, 1500, "").substringAfter("-> ", "").trim().toIntOrNull()
                 if (r != null && r >= 0) {
                     hits++; log("type $id accepted (ret=$r)")
-                    Thread.sleep(1700); exec("stoptype", p, sh, id, 0, "")
+                    Thread.sleep(1700); exec(c, "stoptype", id, 0, "")
                 }
             }
             scanning = false
@@ -575,11 +638,18 @@ class MainActivity : Activity() {
     private fun buildAdvanced() {
         adv = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE }
         out = text("", 12f, Color.WHITE).apply { typeface = Typeface.MONOSPACE; setTextIsSelectable(true) }
-        shellMode = CheckBox(this).apply {
-            text = "Run as shell via Shizuku (needed)"; setTextColor(Color.WHITE); isChecked = true
-            setOnCheckedChangeListener { _, c -> pkg.setText(if (c) shellPkg else packageName) }
+        modeSpin = Spinner(this).apply {
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item,
+                listOf("Auto: try direct, then Shizuku", "Direct only (no Shizuku)", "Shizuku only"))
+            setSelection(prefs.getInt("mode", 0))
+            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) {
+                    prefs.edit().putInt("mode", pos).apply()
+                }
+                override fun onNothingSelected(p: AdapterView<*>?) {}
+            }
         }
-        pkg = field("Caller package", shellPkg)
+        pkg = field("Caller package override (blank = automatic)", "")
         lightName = field("lightName (value that works on your phone)")
         swapRb = CheckBox(this).apply { text = "Swap red/blue (if colors look wrong)"; setTextColor(Color.WHITE) }
         subType = field("Chase subType", "0", true)
@@ -603,8 +673,9 @@ class MainActivity : Activity() {
 
         adv.addView(card(
             advLabel("Connection and effect settings"),
-            shellMode, pkg, lightName, swapRb, subType,
-            row(plainButton("Check light") { go("info") }, plainButton("Stop all") { go("stopall") })
+            modeSpin, pkg, lightName, swapRb, subType,
+            row(plainButton("Check light") { go("info") }, plainButton("Stop all") { go("stopall") }),
+            plainButton("Test direct access (no Shizuku)") { probe(true) }
         ))
         adv.addView(card(
             advLabel("Effect by type ID"), presets, row(type, dur, times),
