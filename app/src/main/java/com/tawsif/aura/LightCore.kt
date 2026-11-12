@@ -26,7 +26,7 @@ object LightCore {
             "json" -> "startLight(json) -> ${inv("startLight", listOf(S, S), pkg, arg)}"
             "stoptype" -> { inv("stopLightByLightType", listOf(I, S), a, pkg); "stopLightByLightType done" }
             "stopall" -> { inv("stopLightAll", emptyList()); "stopLightAll done" }
-            "logs" -> sh("logcat -d -t 80 -s DynamicLight-VivoLightManager:V DynamicLight-VivoLightManagerService:V")
+            "logs" -> sh("logcat -d -t 120 -s DynamicLight-VivoLightManager:V DynamicLight-VivoLightManagerService:V DynamicLight-Json:V System.err:W")
             "shell" -> sh(arg)
             else -> "unknown op: $op"
         }

@@ -11,6 +11,8 @@ import android.text.InputType
 import android.view.Gravity
 import android.view.View
 import android.widget.*
+import org.json.JSONArray
+import org.json.JSONObject
 import rikka.shizuku.Shizuku
 import java.util.concurrent.Executors
 
@@ -25,8 +27,14 @@ class MainActivity : Activity() {
     private lateinit var shellMode: CheckBox
     private lateinit var pkg: EditText
 
+    private val known = listOf(
+        300 to "Incoming call", 400 to "Notification", 500 to "Photo flash",
+        501 to "Secondary photo flash", 502 to "Mood show", 511 to "Charging plugin",
+        512 to "Full charge", 513 to "Low-power charging", 710 to "Media light",
+        800 to "Charging", 810 to "Brightness bar", 811 to "Game brightness bar", 820 to "Boot on"
+    )
     private val shellPkg = "com.android.shell"
-    private val template = "{\n  \"effect\": \"breath\",\n  \"color\": \"#00FFAA\",\n  \"duration\": 3000\n}"
+    private val gameIds = (1601..1610).toList() + (1701..1703) + (1801..1809) + (1901..1907) + 2001
 
     private val args by lazy {
         Shizuku.UserServiceArgs(ComponentName(packageName, LightUserService::class.java.name))
@@ -86,9 +94,58 @@ class MainActivity : Activity() {
         }
         pkg = field("Caller package", shellPkg)
         val type = field("Light type", "400", true)
+        val presets = Spinner(this).apply {
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item,
+                known.map { "${it.first}  ${it.second}" })
+            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) {
+                    type.setText(known[pos].first.toString())
+                }
+                override fun onNothingSelected(p: AdapterView<*>?) {}
+            }
+        }
         val dur = field("Duration ms", "5000", true)
         val times = field("Repeat times", "3", true)
-        val json = field("JSON effect", template, lines = 6)
+        val kinds = listOf("breathing", "strobe", "marquee")
+        val kind = Spinner(this).apply {
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, kinds)
+        }
+        val lightName = field("lightName (see debug)", "")
+        val bright = field("brightness", "255", true)
+        val period = field("periodTime", "2000", true)
+        val count = field("count", "3", true)
+        val total = field("totalTime", "6000", true)
+        val prio = CheckBox(this).apply { text = "isCountPriority" }
+        val c1 = field("color1 hex", "FF0000"); val c2 = field("color2 hex", "00FF00")
+        val c3 = field("color3 hex", "0000FF"); val c4 = field("color4 hex", "FFFFFF")
+        val rise = field("riseTime", "500", true); val hold = field("holdTime", "500", true)
+        val fall = field("fallTime", "500", true); val close = field("closeTime", "500", true)
+        val sub = field("marquee subType", "0", true)
+        val json = field("JSON effect", "", lines = 6)
+
+        fun hex(e: EditText): String {
+            val t = e.text.toString().trim().removePrefix("#").take(6)
+            return if (t.isNotEmpty() && t.toIntOrNull(16) != null) t else "FF0000"
+        }
+        fun build(): String {
+            val t = kinds[kind.selectedItemPosition]
+            val e = JSONObject()
+            e.put("type", t); e.put("lightName", lightName.text.toString().trim())
+            e.put("brightness", n(bright, 255)); e.put("periodTime", n(period, 2000))
+            e.put("count", n(count, 3)); e.put("totalTime", n(total, 6000))
+            e.put("isCountPriority", prio.isChecked)
+            if (t == "breathing") {
+                e.put("lightColor", hex(c1))
+                e.put("riseTime", n(rise, 500)); e.put("holdTime", n(hold, 500))
+                e.put("fallTime", n(fall, 500)); e.put("closeTime", n(close, 500))
+            } else {
+                e.put("firstLightColor", hex(c1)); e.put("secondLightColor", hex(c2))
+                e.put("thirdLightColor", hex(c3)); e.put("fourthLightColor", hex(c4))
+                if (t == "marquee") e.put("subType", n(sub, 0))
+            }
+            return JSONObject().put("combineName", "aura_custom")
+                .put("effects", JSONArray().put(e)).toString(2)
+        }
         val from = field("From", "1", true)
         val to = field("To", "100", true)
         val cmd = field("Shell command", "dumpsys vivo_light_service")
@@ -101,6 +158,7 @@ class MainActivity : Activity() {
         root.addView(row(button("Check light") { go("info") }, button("Stop all") { go("stopall") }))
 
         root.addView(label("Effect by type ID"))
+        root.addView(presets)
         root.addView(row(type, dur, times))
         root.addView(row(
             button("Start (ms)") { go("duration", n(type, 400), n(dur, 5000)) },
@@ -109,15 +167,26 @@ class MainActivity : Activity() {
             button("Start (no limit)") { go("start", n(type, 400)) },
             button("Stop this type") { go("stoptype", n(type, 400)) }))
 
-        root.addView(label("Custom JSON effect (schema unverified)"))
+        root.addView(label("Custom effect (breathing uses color1 only)"))
+        root.addView(row(lightName, kind))
+        root.addView(row(bright, period, count, total))
+        root.addView(prio)
+        root.addView(row(c1, c2)); root.addView(row(c3, c4))
+        root.addView(row(rise, hold, fall, close))
+        root.addView(sub)
+        root.addView(row(
+            button("Build JSON") { json.setText(build()) },
+            button("Start effect") { val j = build(); json.setText(j); go("json", arg = j) }))
         root.addView(json)
-        root.addView(button("Start JSON") { go("json", arg = json.text.toString()) })
+        root.addView(button("Start raw JSON") { go("json", arg = json.text.toString()) })
 
         root.addView(label("Find valid type IDs (1.5s each, watch the light)"))
         root.addView(row(from, to))
         root.addView(row(
-            button("Scan") { scan(n(from, 1), n(to, 100)) },
-            button("Stop scan") { scanning = false }))
+            button("Scan range") { scan((n(from, 1)..n(to, 100)).toList()) },
+            button("Scan known IDs") { scan(known.map { it.first }) }))
+        root.addView(button("Scan game IDs (1601-2001, inferred)") { scan(gameIds) })
+        root.addView(button("Stop scan") { scanning = false })
 
         root.addView(label("Debug"))
         root.addView(cmd)
@@ -179,15 +248,15 @@ class MainActivity : Activity() {
         io.execute { log("> $op (pkg=$p, ${if (sh) "shell" else "direct"})\n" + exec(op, p, sh, a, b, arg)) }
     }
 
-    private fun scan(from: Int, to: Int) {
+    private fun scan(ids: List<Int>) {
         if (scanning) return
         val p = pkg.text.toString().trim(); val sh = shellMode.isChecked
         if (sh && svc == null) { log("Connect Shizuku first."); return }
         scanning = true
         scanner.execute {
-            log("Scan $from..$to started. Accepted IDs are listed; watch the back light.")
+            log("Scan of ${ids.size} IDs started. Accepted IDs are listed; watch the back light.")
             var hits = 0
-            for (id in from..to) {
+            for (id in ids) {
                 if (!scanning) break
                 val r = exec("duration", p, sh, id, 1500).substringAfter("-> ", "").trim().toIntOrNull()
                 if (r != null && r >= 0) {
