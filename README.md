@@ -1,26 +1,24 @@
 # Vivo / iQOO Aura Light Controller
 
-Controls the back aura light on vivo/iQOO phones (iQOO Z10x, vivo T4x) through vivo's own
-`VivoLightManager` framework class, so no Parcel/transaction codes are hard-coded.
+Control the back aura light on vivo / iQOO phones (iQOO Z10x, vivo T4x) with a simple UI.
 
-## Modes
-- **Shell via Shizuku (default):** the call runs as the `shell` user (uid 2000) with package `com.android.shell`.
-- **Direct:** untick the box; the call runs as this app. Works only if the service allows normal apps.
+## Simple screen
+- Effect: Breathing, Blink (strobe) or Chase (marquee)
+- Color: drag on the color plane, tap a swatch, or type a hex code (up to 4 colors for Blink/Chase)
+- Timing: duration (1-60 s or until stopped), speed, brightness
+- Start / Stop, plus a live preview
+- My presets: save looks, tap to play, long-press to delete
 
-## Features
-- Check light (`hasLight`, `getLightCase`, `getLightType`), Stop all
-- Start by type ID: timed, N repeats, or unlimited; stop by type
-- Custom effect builder (breathing / strobe / marquee) -> JSON -> `startLight(pkg, json)`; schema taken from vivo-services `JsonLightEffect`
-- Type picker with 13 known IDs (300 incoming call, 400 notification, 502 mood show, 511 charging plugin...)
-- Scan: tries a range or the known IDs, lists the ones the service accepts
-- Debug: run shell commands as shell, view `DynamicLight-*` logcat lines
+## Advanced tools (collapsed)
+- Shell mode toggle, caller package, **lightName**, red/blue swap, chase subType
+- Effect by type ID, scanners for valid type IDs, raw JSON, shell commands, service logs
+
+## Setup
+1. Install Shizuku and start it (wireless debugging).
+2. Install this APK, open it, tap the status pill at the top and allow Shizuku.
+3. Open **Advanced tools** once and fill in `lightName` (it is remembered).
+4. Pick a color and tap **Start**.
 
 ## Build
-Push to `main`; GitHub Actions builds the APK. Download it from the run's **Artifacts** section.
-The repo includes a fixed debug keystore so updates install over older builds.
-
-## Use
-1. Install Shizuku, start it (wireless debugging), install this APK.
-2. Tap **Connect Shizuku**, approve.
-3. **Check light**. Then **Scan** to find type IDs, then **Start**.
-4. If something fails, tap **Service logs** and read the error.
+Push to `main`; GitHub Actions builds the APK. Download it from the run's **Artifacts**.
+The repo ships a fixed debug keystore so new builds install over old ones.
