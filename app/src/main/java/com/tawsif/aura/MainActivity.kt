@@ -136,7 +136,7 @@ class MainActivity : Activity() {
 
         // preview: rear of the iQOO Z10x / vivo T4x
         preview = PhonePreview(this).apply { fadeColor = cBg }
-        root.addView(preview, LinearLayout.LayoutParams(match, dp(210)).apply { topMargin = dp(8) })
+        root.addView(preview, LinearLayout.LayoutParams(match, dp(220)).apply { topMargin = dp(8) })
         root.addView(text("iQOO Z10x / vivo T4x, rear view", 12f, cSub).apply { gravity = Gravity.CENTER })
 
         // color
