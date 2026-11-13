@@ -4,9 +4,12 @@ import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.ClipDrawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.LayerDrawable
 import android.os.Bundle
 import android.text.Editable
 import android.text.InputFilter
@@ -56,7 +59,7 @@ class MainActivity : Activity() {
     private lateinit var hexField: EditText
     private lateinit var durLabel: TextView
     private lateinit var durSeek: SeekBar
-    private lateinit var foreverBox: CheckBox
+    private lateinit var foreverBox: Switch
     private lateinit var speedLabel: TextView
     private lateinit var speedSeek: SeekBar
     private lateinit var brightLabel: TextView
@@ -102,12 +105,30 @@ class MainActivity : Activity() {
     }
     private fun labelRow(name: String, value: TextView) = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
-        setPadding(0, dp(10), 0, 0)
+        setPadding(0, dp(14), 0, dp(2))
+        gravity = Gravity.CENTER_VERTICAL
+        value.apply {
+            setTypeface(null, Typeface.BOLD); textSize = 13f
+            setPadding(dp(12), dp(4), dp(12), dp(4)); background = rounded(cChip, 12)
+        }
         addView(text(name, 14f, cSub), LinearLayout.LayoutParams(0, wrap, 1f))
         addView(value)
     }
+    /** Thin rounded track, accent-colored fill and a round white thumb. */
     private fun seek(max: Int, onChange: (Int) -> Unit) = SeekBar(this).apply {
         this.max = max
+        val track = GradientDrawable().apply { setColor(cChip); cornerRadius = dp(4).toFloat(); setSize(-1, dp(8)) }
+        val fill = GradientDrawable().apply { setColor(cAccent); cornerRadius = dp(4).toFloat(); setSize(-1, dp(8)) }
+        val layers = LayerDrawable(arrayOf(track, ClipDrawable(fill, Gravity.START, ClipDrawable.HORIZONTAL)))
+        layers.setId(0, android.R.id.background)
+        layers.setId(1, android.R.id.progress)
+        progressDrawable = layers
+        thumb = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL; setColor(Color.WHITE); setSize(dp(24), dp(24))
+            setStroke(dp(4), cAccent)
+        }
+        splitTrack = false
+        setPadding(dp(12), dp(10), dp(12), dp(10))
         setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) { onChange(p) }
             override fun onStartTrackingTouch(s: SeekBar?) {}
@@ -183,9 +204,13 @@ class MainActivity : Activity() {
         durSeek = seek(59) { durSec = it + 1; syncLabels() }
         speedSeek = seek(100) { speed = it; syncLabels() }
         brightSeek = seek(95) { bright = it + 5; syncLabels() }
-        foreverBox = CheckBox(this).apply {
-            text = "Keep on until I stop it (max 1 hour)"; setTextColor(Color.WHITE)
-            setOnCheckedChangeListener { _, c -> forever = c; durSeek.isEnabled = !c; syncLabels() }
+        foreverBox = Switch(this).apply {
+            text = "Keep on until I stop it (max 1 hour)"; setTextColor(Color.WHITE); textSize = 14f
+            setPadding(0, dp(10), 0, dp(6))
+            val states = arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf())
+            trackTintList = ColorStateList(states, intArrayOf(cAccent, cChip))
+            thumbTintList = ColorStateList.valueOf(Color.WHITE)
+            setOnCheckedChangeListener { _, c -> forever = c; durSeek.isEnabled = !c; syncUi(skipHex = true) }
         }
         root.addView(card(
             title("Timing"),
@@ -213,6 +238,11 @@ class MainActivity : Activity() {
             }
         ))
 
+        // footer
+        root.addView(text("Made by Tawsif Eram\ntawsif.eram2025@gmail.com\n+8801923138377", 11f, cSub).apply {
+            gravity = Gravity.CENTER; setPadding(0, dp(28), 0, 0); setLineSpacing(0f, 1.3f)
+        })
+
         // restore last used look
         prefs.getString("last", null)?.let { try { applyState(JSONObject(it)) } catch (_: Throwable) {} }
         plane.setColor(color)
@@ -238,7 +268,7 @@ class MainActivity : Activity() {
             updatingHex = false
         }
         durSeek.progress = durSec - 1; speedSeek.progress = speed; brightSeek.progress = bright - 5
-        foreverBox.isChecked = forever; durSeek.isEnabled = !forever
+        foreverBox.isChecked = forever; durSeek.isEnabled = !forever; durSeek.alpha = if (forever) 0.35f else 1f
         syncLabels()
     }
 
