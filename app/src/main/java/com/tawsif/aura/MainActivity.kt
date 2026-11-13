@@ -35,36 +35,23 @@ class MainActivity : Activity() {
     private val wrap = ViewGroup.LayoutParams.WRAP_CONTENT
     private val match = ViewGroup.LayoutParams.MATCH_PARENT
 
-    // effect model
-    private val kinds = listOf("breathing", "strobe", "marquee")
-    private val kindLabels = listOf("Breathing", "Blink", "Chase")
-    private val kindHints = listOf(
-        "Smooth fade in and out with one color.",
-        "Flashes through up to 4 colors. Use the same color twice to use fewer.",
-        "Colors run around the light, up to 4 colors."
-    )
     private val swatches = listOf(
         "#FF3B30", "#FF9500", "#FFCC00", "#34C759", "#00C7BE", "#00E5FF",
         "#007AFF", "#5856D6", "#AF52DE", "#FF2D95", "#FFFFFF", "#FFD9A0"
     ).map { Color.parseColor(it) }
-    private val colors = intArrayOf(
-        Color.parseColor("#FF3B30"), Color.parseColor("#34C759"),
-        Color.parseColor("#007AFF"), Color.WHITE
-    )
-    private var kind = 0
-    private var slot = 0
+
+    // effect model: one color; speed 0 = steady light, 1..100 = breathing slow..fast
+    private var color = Color.parseColor("#FF3B30")
     private var durSec = 10
     private var forever = false
-    private var speed = 50      // 0 = steady light, 1..100 = slow..fast
+    private var speed = 50
     private var bright = 100
     private var updatingHex = false
 
     // widgets
     private lateinit var status: TextView
-    private lateinit var preview: View
-    private lateinit var kindButtons: List<Button>
-    private lateinit var kindHint: TextView
-    private lateinit var slotViews: List<View>
+    private lateinit var preview: PhonePreview
+    private lateinit var colorDot: View
     private lateinit var plane: ColorPlane
     private lateinit var hexField: EditText
     private lateinit var durLabel: TextView
@@ -147,29 +134,13 @@ class MainActivity : Activity() {
             addView(status)
         })
 
-        // preview
-        preview = View(this)
-        root.addView(preview, LinearLayout.LayoutParams(match, dp(110)).apply { topMargin = dp(16) })
+        // preview: rear of the iQOO Z10x / vivo T4x
+        preview = PhonePreview(this).apply { fadeColor = cBg }
+        root.addView(preview, LinearLayout.LayoutParams(match, dp(210)).apply { topMargin = dp(8) })
+        root.addView(text("iQOO Z10x / vivo T4x, rear view", 12f, cSub).apply { gravity = Gravity.CENTER })
 
-        // effect style
-        kindButtons = kindLabels.mapIndexed { i, l ->
-            pill(l, cChip) { kind = i; if (kind == 0) slot = 0; syncUi() }
-        }
-        kindHint = text("", 13f, cSub).apply { setPadding(0, dp(8), 0, 0) }
-        val kindRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        kindButtons.forEachIndexed { i, b ->
-            kindRow.addView(b, LinearLayout.LayoutParams(0, dp(46), 1f).apply {
-                if (i > 0) marginStart = dp(8)
-            })
-        }
-        root.addView(card(title("Effect"), kindRow, kindHint))
-
-        // colors
-        slotViews = (0 until 4).map { i ->
-            View(this).apply { setOnClickListener { slot = i; plane.setColor(colors[i]); syncUi() } }
-        }
-        val slotRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        slotViews.forEach { slotRow.addView(it, LinearLayout.LayoutParams(dp(40), dp(40)).apply { marginEnd = dp(10) }) }
+        // color
+        colorDot = View(this)
         hexField = EditText(this).apply {
             hint = "RRGGBB"; typeface = Typeface.MONOSPACE; textSize = 14f
             setTextColor(Color.WHITE); setHintTextColor(cSub); setSingleLine(true)
@@ -181,34 +152,36 @@ class MainActivity : Activity() {
                     val t = s?.toString() ?: return
                     if (updatingHex || t.length != 6) return
                     val v = t.toIntOrNull(16) ?: return
-                    colors[slot] = v or (0xFF shl 24)
-                    plane.setColor(colors[slot]); syncUi(skipHex = true)
+                    color = v or (0xFF shl 24)
+                    plane.setColor(color); syncUi(skipHex = true)
                 }
             })
         }
-        slotRow.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
-        slotRow.addView(text("#", 16f, cSub))
-        slotRow.addView(hexField, LinearLayout.LayoutParams(dp(100), wrap))
+        val hexRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        hexRow.addView(colorDot, LinearLayout.LayoutParams(dp(40), dp(40)))
+        hexRow.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+        hexRow.addView(text("#", 16f, cSub))
+        hexRow.addView(hexField, LinearLayout.LayoutParams(dp(100), wrap))
 
-        plane = ColorPlane(this).apply { onPick = { c -> colors[slot] = c; syncUi() } }
+        plane = ColorPlane(this).apply { onPick = { c -> color = c; syncUi() } }
         plane.layoutParams = LinearLayout.LayoutParams(match, dp(170)).apply { topMargin = dp(12); bottomMargin = dp(12) }
 
         val swatchRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         swatches.forEach { c ->
             swatchRow.addView(View(this).apply {
                 background = circle(c, Color.parseColor("#33FFFFFF"))
-                setOnClickListener { colors[slot] = c; plane.setColor(c); syncUi() }
+                setOnClickListener { color = c; plane.setColor(c); syncUi() }
             }, LinearLayout.LayoutParams(dp(36), dp(36)).apply { marginEnd = dp(10) })
         }
         val swatchScroll = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false; addView(swatchRow)
         }
-        root.addView(card(title("Color"), slotRow, plane, swatchScroll))
+        root.addView(card(title("Color"), hexRow, plane, swatchScroll))
 
         // timing
         durLabel = text("", 14f); speedLabel = text("", 14f); brightLabel = text("", 14f)
         durSeek = seek(59) { durSec = it + 1; syncLabels() }
-        speedSeek = seek(100) { if (speed != it) { speed = it; syncUi() } }
+        speedSeek = seek(100) { speed = it; syncLabels() }
         brightSeek = seek(95) { bright = it + 5; syncLabels() }
         foreverBox = CheckBox(this).apply {
             text = "Keep on until I stop it (max 1 hour)"; setTextColor(Color.WHITE)
@@ -242,7 +215,7 @@ class MainActivity : Activity() {
 
         // restore last used look
         prefs.getString("last", null)?.let { try { applyState(JSONObject(it)) } catch (_: Throwable) {} }
-        plane.setColor(colors[slot])
+        plane.setColor(color)
         syncUi()
         renderPresets()
         refreshStatus()
@@ -257,20 +230,11 @@ class MainActivity : Activity() {
 
     // ---------- state -> UI ----------
     private fun syncUi(skipHex: Boolean = false) {
-        kindButtons.forEachIndexed { i, b -> b.background = rounded(if (i == kind) cAccent else cChip, 14) }
-        kindHint.text = if (speed == 0) "Steady light, no blinking. Uses the first color." else kindHints[kind]
-        val used = if (kind == 0 || speed == 0) 1 else 4
-        if (slot >= used) slot = 0
-        for (i in 0 until 4) {
-            slotViews[i].visibility = if (i < used) View.VISIBLE else View.GONE
-            slotViews[i].background = circle(colors[i], if (i == slot) Color.WHITE else Color.parseColor("#44FFFFFF"))
-        }
-        val shown = (0 until used).map { colors[it] }.let { if (it.size == 1) listOf(it[0], it[0]) else it }
-        preview.background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, shown.toIntArray())
-            .apply { cornerRadius = dp(22).toFloat() }
+        colorDot.background = circle(color, Color.WHITE)
+        preview.ringColor = color
         if (!skipHex) {
             updatingHex = true
-            hexField.setText(String.format("%06X", colors[slot] and 0xFFFFFF))
+            hexField.setText(String.format("%06X", color and 0xFFFFFF))
             updatingHex = false
         }
         durSeek.progress = durSec - 1; speedSeek.progress = speed; brightSeek.progress = bright - 5
@@ -285,21 +249,22 @@ class MainActivity : Activity() {
     }
 
     private fun refreshStatus() = runOnUiThread {
-        val (label, color) = when (supported) {
+        val (label, c) = when (supported) {
             true -> "Ready" to cGreen
             false -> "Not supported" to cRed
             null -> "Checking…" to cOrange
         }
         status.text = "●  $label"
-        status.background = rounded((color and 0x00FFFFFF) or (0x33 shl 24), 20)
-        status.setTextColor(color)
+        status.background = rounded((c and 0x00FFFFFF) or (0x33 shl 24), 20)
+        status.setTextColor(c)
     }
 
     /** Harmless call to see whether this phone has the vivo / iQOO back light. */
     private fun probe() {
         io.execute {
             val r = LightCore.call("info", packageName, "")
-            supported = r.startsWith("uid=") && !r.contains("hasLight=false") && !r.contains("case=-1")
+            // Only a real failure (class missing / call rejected) counts as unsupported.
+            supported = !r.startsWith("ERROR")
             if (supported == false) say("This app works on vivo / iQOO phones that have a back light.")
             refreshStatus()
         }
@@ -311,38 +276,30 @@ class MainActivity : Activity() {
         return String.format("%06X", v and 0xFFFFFF)
     }
 
-    /** Milliseconds per cycle; 0 means steady. */
-    private fun period() = if (speed <= 0) 0 else 4000 - (speed - 1) * 3500 / 99
+    /** Milliseconds per breathing cycle; only used when speed > 0. */
+    private fun period() = 4000 - (speed - 1) * 3500 / 99
 
     private fun buildJson(): String {
         val total = if (forever) 3_600_000 else durSec * 1000
         val e = JSONObject()
+        e.put("type", "breathing")
         e.put("lightName", AuraConfig.LIGHT_NAME)
         e.put("brightness", bright * 255 / 100)
         e.put("isCountPriority", false)
         e.put("totalTime", total)
+        e.put("lightColor", hex(color))
         if (speed == 0) {
-            // Steady: a breathing effect that fades in quickly, then just holds the light on.
+            // Steady: fade in quickly, then just hold the light on for the whole duration.
             val rise = 150; val fall = 1; val close = 1
-            e.put("type", "breathing")
             e.put("periodTime", total); e.put("count", 1)
-            e.put("lightColor", hex(colors[0]))
             e.put("riseTime", rise); e.put("holdTime", total - rise - fall - close)
             e.put("fallTime", fall); e.put("closeTime", close)
         } else {
             val p = period()
-            e.put("type", kinds[kind])
+            val rise = p * 35 / 100; val hold = p * 15 / 100
             e.put("periodTime", p); e.put("count", maxOf(1, (total + p - 1) / p))
-            if (kind == 0) {
-                val rise = p * 35 / 100; val hold = p * 15 / 100
-                e.put("lightColor", hex(colors[0]))
-                e.put("riseTime", rise); e.put("holdTime", hold); e.put("fallTime", rise)
-                e.put("closeTime", p - rise * 2 - hold)
-            } else {
-                e.put("firstLightColor", hex(colors[0])); e.put("secondLightColor", hex(colors[1]))
-                e.put("thirdLightColor", hex(colors[2])); e.put("fourthLightColor", hex(colors[3]))
-                if (kind == 2) e.put("subType", 0)
-            }
+            e.put("riseTime", rise); e.put("holdTime", hold); e.put("fallTime", rise)
+            e.put("closeTime", p - rise * 2 - hold)
         }
         return JSONObject().put("combineName", "aura_custom").put("effects", JSONArray().put(e)).toString()
     }
@@ -370,9 +327,8 @@ class MainActivity : Activity() {
 
     private fun startPreview() {
         stopPreview()
-        preview.alpha = 1f
         if (speed > 0) {
-            val a = ObjectAnimator.ofFloat(preview, View.ALPHA, 1f, 0.2f)
+            val a = ObjectAnimator.ofFloat(preview, "glow", 1f, 0.12f)
             a.duration = (period() / 2).toLong().coerceAtLeast(250L)
             a.repeatMode = ValueAnimator.REVERSE
             a.repeatCount = ValueAnimator.INFINITE
@@ -384,23 +340,28 @@ class MainActivity : Activity() {
     private fun stopPreview() {
         preview.removeCallbacks(doneRunnable)
         pulse?.cancel(); pulse = null
-        preview.alpha = 1f
+        preview.glow = 1f
     }
 
     // ---------- presets ----------
     private fun stateJson() = JSONObject()
-        .put("kind", kind).put("colors", JSONArray(colors.toList()))
-        .put("dur", durSec).put("forever", forever).put("speed", speed).put("bright", bright)
+        .put("color", color).put("dur", durSec).put("forever", forever)
+        .put("speed", speed).put("bright", bright)
+
+    /** Older saves stored a list of colors; the first one is the one that still applies. */
+    private fun colorOf(o: JSONObject): Int {
+        if (o.has("color")) return o.getInt("color")
+        val a = o.optJSONArray("colors")
+        return if (a != null && a.length() > 0) a.getInt(0) else Color.WHITE
+    }
 
     private fun applyState(o: JSONObject) {
-        kind = o.optInt("kind", 0).coerceIn(0, 2)
-        o.optJSONArray("colors")?.let { a -> for (i in 0 until minOf(4, a.length())) colors[i] = a.getInt(i) }
+        color = colorOf(o)
         durSec = o.optInt("dur", 10).coerceIn(1, 60)
         forever = o.optBoolean("forever", false)
         speed = o.optInt("speed", 50).coerceIn(0, 100)
         bright = o.optInt("bright", 100).coerceIn(5, 100)
-        slot = 0
-        if (this::plane.isInitialized) plane.setColor(colors[0])
+        if (this::plane.isInitialized) plane.setColor(color)
         if (this::hexField.isInitialized) syncUi()
     }
 
@@ -424,15 +385,13 @@ class MainActivity : Activity() {
         val list = loadPresets()
         for (i in 0 until list.length()) {
             val o = list.getJSONObject(i)
-            val cs = o.optJSONArray("colors")
-            val first = if (cs != null && cs.length() > 0) cs.getInt(0) else Color.WHITE
             val rowV = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
                 setPadding(dp(12), dp(10), dp(12), dp(10)); background = rounded(cChip, 14)
-                addView(View(context).apply { background = circle(first, Color.parseColor("#44FFFFFF")) },
+                addView(View(context).apply { background = circle(colorOf(o), Color.parseColor("#44FFFFFF")) },
                     LinearLayout.LayoutParams(dp(26), dp(26)).apply { marginEnd = dp(12) })
                 addView(text(o.optString("name", "Preset"), 15f), LinearLayout.LayoutParams(0, wrap, 1f))
-                addView(text("${kindLabels[o.optInt("kind", 0).coerceIn(0, 2)]} ▶", 13f, cSub))
+                addView(text((if (o.optInt("speed", 50) == 0) "Steady" else "Breathing") + " ▶", 13f, cSub))
                 setOnClickListener { applyState(o); startEffect() }
                 setOnLongClickListener {
                     AlertDialog.Builder(this@MainActivity).setTitle("Delete preset?")
